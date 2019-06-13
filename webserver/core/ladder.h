@@ -129,6 +129,11 @@ extern bool run_dnp3;
 extern time_t start_time;
 extern time_t end_time;
 
+//tcpserver.cpp
+void startTCPServer(int server, int port, int plcVariable);
+void stopTCPServer(int server);
+void stopTCPAllServer();
+
 //modbus.cpp
 int processModbusMessage(unsigned char *buffer, int bufferSize);
 void mapUnusedIO();
