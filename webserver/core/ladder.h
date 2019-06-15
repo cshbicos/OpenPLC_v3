@@ -53,6 +53,25 @@ typedef uint64_t   IEC_LWORD;
 typedef float    IEC_REAL;
 typedef double   IEC_LREAL;
 
+
+#ifndef IEC_TYPES_H
+//we need this unless iec_types.h has already defined it...
+#ifndef STR_MAX_LEN
+#define STR_MAX_LEN 126
+#endif
+
+#ifndef STR_LEN_TYPE
+#define STR_LEN_TYPE int8_t
+#endif
+
+typedef STR_LEN_TYPE __strlen_t;
+typedef struct {
+    __strlen_t len;
+    uint8_t body[STR_MAX_LEN];
+} /* __attribute__((packed)) */ IEC_STRING;  /* packed is gcc specific! */
+#endif /*IEC_TYPES_H*/
+
+
 //Booleans
 extern IEC_BOOL *bool_input[BUFFER_SIZE][8];
 extern IEC_BOOL *bool_output[BUFFER_SIZE][8];
@@ -69,6 +88,7 @@ extern IEC_UINT *int_output[BUFFER_SIZE];
 extern IEC_UINT *int_memory[BUFFER_SIZE];
 extern IEC_DINT *dint_memory[BUFFER_SIZE];
 extern IEC_LINT *lint_memory[BUFFER_SIZE];
+extern IEC_STRING *string_memory[BUFFER_SIZE];
 
 //Special Functions
 extern IEC_LINT *special_functions[BUFFER_SIZE];
@@ -130,9 +150,10 @@ extern time_t start_time;
 extern time_t end_time;
 
 //tcpserver.cpp
-void startTCPServer(int server, int port, int plcVariable);
+void startTCPServer(int server, int port);
 void stopTCPServer(int server);
 void stopTCPAllServer();
+void sendRcvTCP();
 
 //modbus.cpp
 int processModbusMessage(unsigned char *buffer, int bufferSize);

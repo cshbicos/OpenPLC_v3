@@ -259,6 +259,7 @@ int main(int argc,char **argv)
 
 		pthread_mutex_lock(&bufferLock); //lock mutex
 		updateCustomIn();
+                sendRcvTCP();
         updateBuffersIn_MB(); //update input image table with data from slave devices
         handleSpecialFunctions();
 		config_run__(tick++); // execute plc program logic

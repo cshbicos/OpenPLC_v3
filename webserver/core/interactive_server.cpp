@@ -71,16 +71,22 @@ void *dnp3Thread(void *arg)
 //-----------------------------------------------------------------------------
 // Read the argument from a command function
 //-----------------------------------------------------------------------------
-int readCommandArgument(unsigned char *command)
+int readCommandArgument(unsigned char *command, int multiArguments[] = NULL, int maxNumOfArgs = 0)
 {
     int i = 0;
     int j = 0;
+    int k = 0;
     unsigned char argument[1024];
     
     while (command[i] != '(' && command[i] != '\0') i++;
     if (command[i] == '(') i++;
     while (command[i] != ')' && command[i] != '\0')
-    {
+    {   
+        if(command[i] == ',' && k < maxNumOfArgs){
+            multiArguments[k] = atoi(argument);
+            j = 0;
+            k++;
+        }
         argument[j] = command[i];
         i++;
         j++;
@@ -89,6 +95,9 @@ int readCommandArgument(unsigned char *command)
     
     return atoi(argument);
 }
+
+
+
 
 //-----------------------------------------------------------------------------
 // Create the socket and bind it. Returns the file descriptor for the socket
@@ -210,7 +219,31 @@ void processCommand(unsigned char *buffer, int client_fd)
             sprintf(log_msg, "DNP3 server was stopped\n");
             log(log_msg);
         }
+        
+        stopTCPAllServer();
+        
         run_openplc = 0;
+        processing_command = false;
+    }
+    else if (strncmp(buffer, "start_tcp(", 10) == 0)
+    {
+        processing_command = true;
+        sprintf(log_msg, "Issued start_tcp() command to start on port: %d\n", readCommandArgument(buffer));
+        log(log_msg);
+        int data[2];
+        readCommandArgument(buffer, data, 2);
+        
+        startTCPServer(data[0], data[1]);
+        
+        processing_command = false;
+    }
+    else if (strncmp(buffer, "stop_tcp(", 9) == 0)
+    {
+        processing_command = true;
+        sprintf(log_msg, "Issued stop_tcp() command to stop server %d\n", readCommandArgument(buffer));
+        log(log_msg);        
+        stopTCPServer(readCommandArgument(buffer));
+        
         processing_command = false;
     }
     else if (strncmp(buffer, "start_modbus(", 13) == 0)

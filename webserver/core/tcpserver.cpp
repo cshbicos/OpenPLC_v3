@@ -21,6 +21,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <pthread.h>
+#include <semaphore.h>
 #include <string.h>
 #include <errno.h>
 #include <unistd.h> 
@@ -31,15 +32,31 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 
-#include "iec_std_lib.h"
+
 #include "ladder.h"
 
 #define MAXTCPSERVERS 3
 #define SELECT_TIMEOUT 10
+#define TCPSERVER_START 1000
 
 typedef struct{
-    pthread_t thread;
+    pthread_t listenThread;
+    pthread_t writeThread;
+    
+    sem_t semRead;
+    sem_t semReadEmpty;
+    IEC_STRING currentReadValue;
+    char currentLineCache[STR_MAX_LEN];
+    int curLinePos;
+    
+    sem_t semWrite;
+    sem_t semWriteEmpty;
+    IEC_STRING currentWriteValue;
+    
     bool running = false;
+    pthread_mutex_t socketMutex;
+    int maxSocketDescriptor;
+    fd_set sockets;
 } TcpServerThread;
 
 typedef struct{
@@ -48,6 +65,73 @@ typedef struct{
 } TCPServerSetting;
 
 TcpServerThread tcpThreads[MAXTCPSERVERS];
+
+void sendRcvTCP()
+{   
+    for(int i=0;i<MAXTCPSERVERS;i++)
+    {   
+        if(tcpThreads[i].running == false)
+            //the TCP server is not running
+            continue;
+        
+        if(*(int_memory[TCPSERVER_START + (i*2)]) == 2)
+        {
+            //receive ready from PLC side
+            if(sem_trywait(&(tcpThreads[i].semRead)) == 0)
+            {
+                //there was also something to be read here
+                
+                //copy the new values into our registers...
+                memcpy( string_memory[TCPSERVER_START + (i*2)], &(tcpThreads[i].currentReadValue), sizeof(IEC_STRING));
+                *(int_memory[TCPSERVER_START + (i*2)]) = 1; //set the receive ready value so the PLC knows something is here
+
+                //the next item can be read
+                sem_post(&(tcpThreads[i].semReadEmpty));
+            }
+        }
+        
+        if(*(int_memory[TCPSERVER_START + (i*2) + 1]) == 2)
+        {
+            //send ready from PLC side
+            if(sem_trywait(&(tcpThreads[i].semWriteEmpty)) == 0)
+            {
+                //the sending buffer is ready to be filled with some more stuff...
+                
+                //copy the new values into our registers...
+                memcpy( &(tcpThreads[i].currentWriteValue), string_memory[TCPSERVER_START + (i*2) + 1], sizeof(IEC_STRING));
+                *(int_memory[TCPSERVER_START + (i*2) + 1]) = 1; //set the write ready value so the PLC can set more data to write
+                
+                //the next item can be written out to the world in the other thread
+                sem_post(&(tcpThreads[i].semWrite));
+            }
+        }
+    }
+}
+
+
+
+
+void handleTCPRcvMessage( int server, char * buffer, int readSize)
+{
+    for(int curPos=0;curPos<readSize;curPos++){
+        if(curPos != '\n' && tcpThreads[server].curLinePos < STR_MAX_LEN)
+        {
+            tcpThreads[server].currentLineCache[tcpThreads[server].curLinePos++] = buffer[curPos];
+            continue;
+        }
+        
+        //either we got a '\n' or the telegram cache is full...
+        if(sem_wait(&(tcpThreads[server].semReadEmpty)) == 0)
+        {
+            //we have an empty spot to read into - let's do it
+            memcpy(&(tcpThreads[server].currentReadValue.body), tcpThreads[server].currentLineCache, tcpThreads[server].curLinePos );
+            tcpThreads[server].currentReadValue.len = tcpThreads[server].curLinePos;
+            tcpThreads[server].curLinePos = 0;
+            
+            sem_post(&(tcpThreads[server].semRead));
+        }
+    }
+}
 
 int createTCPSocket(int port)
 {
@@ -95,31 +179,32 @@ int createTCPSocket(int port)
 }
 
 
-void runTCPServer(TCPServerSetting * setting)
+void *runTCPListenThread( void *settingParam)
 {
+    TCPServerSetting * setting = (TCPServerSetting *) settingParam;
+
     unsigned char log_msg[1000];
     int listenSocket, newSocket;
-    int maxSocketDescriptor;
     struct sockaddr_in clientAddress; socklen_t clientLen;
-    fd_set masterSet, workingSet;  
+    fd_set workingSet;  
     int valread, rc;
     struct timeval timeout;
     
-    IEC_STRING buffer;
+    char buffer[STR_MAX_LEN];
     
     timeout.tv_sec = SELECT_TIMEOUT;
     
     listenSocket = createTCPSocket(setting->port);
-    
-    FD_ZERO(&masterSet);
-    maxSocketDescriptor = listenSocket;
-    FD_SET(listenSocket, &masterSet);
+    pthread_mutex_lock(&(tcpThreads[setting->serverNum].socketMutex));
+    tcpThreads[setting->serverNum].maxSocketDescriptor = listenSocket;
+    FD_SET(listenSocket, &(tcpThreads[setting->serverNum].sockets));
+    pthread_mutex_unlock(&(tcpThreads[setting->serverNum].socketMutex));
     
     while(tcpThreads[setting->serverNum].running)
     {
-        memcpy(&workingSet, &masterSet, sizeof(masterSet));
+        memcpy(&workingSet, &(tcpThreads[setting->serverNum].sockets), sizeof(tcpThreads[setting->serverNum].sockets));
         
-        rc = select( maxSocketDescriptor + 1 , &workingSet , NULL , NULL , &timeout);
+        rc = select( tcpThreads[setting->serverNum].maxSocketDescriptor + 1 , &workingSet , NULL , NULL , &timeout);
         if(rc < 0)   
         {   
             sprintf(log_msg, "TCP Server %d: Select() Error\n", setting->serverNum);
@@ -134,7 +219,7 @@ void runTCPServer(TCPServerSetting * setting)
         }
         
         int descReady = rc;
-        for (int i=0; i<=maxSocketDescriptor &&  descReady > 0; ++i)
+        for (int i=0; i<=tcpThreads[setting->serverNum].maxSocketDescriptor &&  descReady > 0; ++i)
         {
             if(!FD_ISSET(i, &workingSet))
                 continue;
@@ -151,16 +236,18 @@ void runTCPServer(TCPServerSetting * setting)
                         log(log_msg); 
                         break;
                     } 
-                    FD_SET(newSocket, &masterSet);
-                    if (newSocket > maxSocketDescriptor)
-                        maxSocketDescriptor = newSocket;
+                    pthread_mutex_lock(&(tcpThreads[setting->serverNum].socketMutex));
+                    FD_SET(newSocket, &(tcpThreads[setting->serverNum].sockets));
+                    if (newSocket > tcpThreads[setting->serverNum].maxSocketDescriptor)
+                        tcpThreads[setting->serverNum].maxSocketDescriptor = newSocket;
+                    pthread_mutex_unlock(&(tcpThreads[setting->serverNum].socketMutex));
                 }while(newSocket != -1);  
             }else{
                 //if the select didn't trigger because of a new connection
                 bool closeConnection = false;
                 do{
                     //try to read all data
-                    rc = recv(i, buffer, sizeof(buffer), 0);
+                    rc = recv(i, &buffer, sizeof(buffer), 0);
                     if(rc <= 0)
                     {
                         if (errno != EWOULDBLOCK)
@@ -173,39 +260,73 @@ void runTCPServer(TCPServerSetting * setting)
                         break;
                     }
                     
-                    //this is where we now write to the PLC our newly obtained information
+                    //this is where we now write to the buffers so the PLC can receive our message
+                    handleTCPRcvMessage(setting->serverNum, buffer, rc);
                     
                 }while(true);
                 if(closeConnection == true)
                 {
                     close(i);
-                    FD_CLR(i, &masterSet);
-                    if (i == maxSocketDescriptor)
-                    {
-                        while (FD_ISSET(maxSocketDescriptor, &masterSet) == false)
-                            maxSocketDescriptor -= 1;
+                    pthread_mutex_lock(&(tcpThreads[setting->serverNum].socketMutex));
+                    FD_CLR(i, &(tcpThreads[setting->serverNum].sockets));
+                    if (i == tcpThreads[setting->serverNum].maxSocketDescriptor)
+                    {   
+                        while (FD_ISSET(tcpThreads[setting->serverNum].maxSocketDescriptor, &(tcpThreads[setting->serverNum].sockets)) == false)
+                            tcpThreads[setting->serverNum].maxSocketDescriptor -= 1;
                     }
+                    pthread_mutex_unlock(&(tcpThreads[setting->serverNum].socketMutex));
                 }
             }
         }
         
     }
     
-    for (int i=0; i<=maxSocketDescriptor;++i){
-        if(FD_ISSET(i, &masterSet))
+    pthread_mutex_lock(&(tcpThreads[setting->serverNum].socketMutex));
+    for (int i=0; i<=tcpThreads[setting->serverNum].maxSocketDescriptor;++i){
+        if(FD_ISSET(i, &(tcpThreads[setting->serverNum].sockets)))
             close(i);
     }
+    pthread_mutex_unlock(&(tcpThreads[setting->serverNum].socketMutex));
     
     close(listenSocket);
     sprintf(log_msg, "Terminating TCP Server thread %d\n", setting->serverNum);
     log(log_msg);
 } 
 
-
-
-void *startThread( void *settings){
-    runTCPServer( (TCPServerSetting *) settings );
+void *runTCPWriteThread( void *settingsParam){
+    TCPServerSetting * setting = (TCPServerSetting *) settingsParam;
+    unsigned char log_msg[1000];
+    fd_set workingSet;  
+    struct timespec ts;
+    
+    
+    while(tcpThreads[setting->serverNum].running)
+    {
+        
+        clock_gettime(CLOCK_REALTIME, &ts);
+        ts.tv_sec += SELECT_TIMEOUT;
+        //wait until we got something to write...
+        if(sem_timedwait(&(tcpThreads[setting->serverNum].semWrite), &ts) == 0)
+        {   
+            //get all open sockets to write to...
+            pthread_mutex_lock(&(tcpThreads[setting->serverNum].socketMutex));
+            memcpy(&workingSet, &(tcpThreads[setting->serverNum].sockets), sizeof(tcpThreads[setting->serverNum].sockets));
+            int maxDesc = tcpThreads[setting->serverNum].maxSocketDescriptor;
+            pthread_mutex_unlock(&(tcpThreads[setting->serverNum].socketMutex));
+               
+            
+            for (int i=0; i<=maxDesc; ++i)
+            {
+                if(!FD_ISSET(i, &workingSet))
+                    continue;
+                send(i, &(tcpThreads[setting->serverNum].currentWriteValue.body), tcpThreads[setting->serverNum].currentWriteValue.len, 0);
+            }
+            
+            sem_post(&(tcpThreads[setting->serverNum].semWriteEmpty));
+        }
+    }
 }
+
 
 
 void startTCPServer(int server, int port){
@@ -224,17 +345,57 @@ void startTCPServer(int server, int port){
     }
     
     TCPServerSetting setting = { port, server };
-    tcpThreads[server].running = true;
-    pthread_create(&(tcpThreads[server].thread), NULL, startThread, &setting);
     
+    //intitalize the tcp server 
+    FD_ZERO(&(tcpThreads[server].sockets));
+    tcpThreads[server].maxSocketDescriptor = 0;
+    tcpThreads[server].running = true;
+    tcpThreads[server].curLinePos = 0;
+    sem_init(&(tcpThreads[server].semRead), 0, 0);
+    sem_init(&(tcpThreads[server].semReadEmpty), 0, 1);
+    sem_init(&(tcpThreads[server].semWrite), 0, 0);
+    sem_init(&(tcpThreads[server].semWriteEmpty), 0, 1);
+    
+    pthread_create(&(tcpThreads[server].listenThread), NULL, runTCPListenThread, &setting);
+    pthread_create(&(tcpThreads[server].writeThread), NULL,  runTCPWriteThread, &setting);
 }
 
 void stopTCPServer(int server){
+    unsigned char log_msg[1000];
     
+    if(server < 0 || server > (MAXTCPSERVERS-1)){
+        sprintf(log_msg, "TCP Server %d does not exist\n", server);
+        log(log_msg);
+        return;
+    }
+    
+    if(tcpThreads[server].running != true){
+        sprintf(log_msg, "TCP Server %d is not running\n", server);
+        log(log_msg);
+        return; 
+    }
+
+    tcpThreads[server].running = false;
+    pthread_join(tcpThreads[server].listenThread, NULL);
+    pthread_join(tcpThreads[server].writeThread, NULL);
+
+    FD_ZERO(&(tcpThreads[server].sockets));
+    tcpThreads[server].maxSocketDescriptor = 0;
+    tcpThreads[server].curLinePos = 0;
+    sem_destroy(&(tcpThreads[server].semRead));
+    sem_destroy(&(tcpThreads[server].semReadEmpty));
+    sem_destroy(&(tcpThreads[server].semWrite));
+    sem_destroy(&(tcpThreads[server].semWriteEmpty));
+    
+    sprintf(log_msg, "TCP Server %d was stopped\n", server);
+    log(log_msg);
 }
 
 void stopTCPAllServer(){
     
+    for(int i=0;i<MAXTCPSERVERS;i++)
+        if(tcpThreads[i].running == true)
+            stopTCPServer(i);
     
 }
 
