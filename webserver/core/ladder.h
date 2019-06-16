@@ -89,6 +89,7 @@ extern IEC_UINT *int_memory[BUFFER_SIZE];
 extern IEC_DINT *dint_memory[BUFFER_SIZE];
 extern IEC_LINT *lint_memory[BUFFER_SIZE];
 extern IEC_STRING *string_memory[BUFFER_SIZE];
+extern IEC_BOOL *bool_memory[BUFFER_SIZE][8];
 
 //Special Functions
 extern IEC_LINT *special_functions[BUFFER_SIZE];

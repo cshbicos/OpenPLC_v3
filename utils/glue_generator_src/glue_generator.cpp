@@ -60,6 +60,7 @@ IEC_UINT *int_output[BUFFER_SIZE];\r\n\
 IEC_UINT *int_memory[BUFFER_SIZE];\r\n\
 IEC_DINT *dint_memory[BUFFER_SIZE];\r\n\
 IEC_LINT *lint_memory[BUFFER_SIZE];\r\n\
+IEC_BOOL *bool_memory[BUFFER_SIZE][8];\r\n\
 IEC_STRING *string_memory[BUFFER_SIZE];\r\n\
 \r\n\
 //Special Functions\r\n\
@@ -196,6 +197,9 @@ void glueVar(ostream& glueVars, char *varName, char *varType)
 				break;
 			case 'D':
 				glueVars << "\tdint_memory[" << pos1 << "] = (IEC_DINT *)" << varName << ";\r\n";
+				break;
+                        case 'X':
+				glueVars << "\tbool_memory[" << pos1 << "][" << pos2 << "] = " << varName << ";\r\n";
 				break;
                         case 'B':
                                 if(strncmp("STRING", varType, 6) == 0)

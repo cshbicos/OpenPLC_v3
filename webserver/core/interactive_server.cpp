@@ -71,7 +71,7 @@ void *dnp3Thread(void *arg)
 //-----------------------------------------------------------------------------
 // Read the argument from a command function
 //-----------------------------------------------------------------------------
-int readCommandArgument(unsigned char *command, int multiArguments[] = NULL, int maxNumOfArgs = 0)
+int readCommandArgument(unsigned char *command, int *multiArguments = NULL, int maxNumOfArgs = 0)
 {
     int i = 0;
     int j = 0;
@@ -82,10 +82,13 @@ int readCommandArgument(unsigned char *command, int multiArguments[] = NULL, int
     if (command[i] == '(') i++;
     while (command[i] != ')' && command[i] != '\0')
     {   
-        if(command[i] == ',' && k < maxNumOfArgs){
+        if(command[i] == ',' && k < maxNumOfArgs)
+        {   
             multiArguments[k] = atoi(argument);
             j = 0;
             k++;
+            i++;
+            continue;
         }
         argument[j] = command[i];
         i++;
@@ -93,6 +96,9 @@ int readCommandArgument(unsigned char *command, int multiArguments[] = NULL, int
         argument[j] = '\0';
     }
     
+    if(k < maxNumOfArgs){
+        multiArguments[k] = atoi(argument);
+    }
     return atoi(argument);
 }
 
@@ -230,6 +236,7 @@ void processCommand(unsigned char *buffer, int client_fd)
         processing_command = true;
         sprintf(log_msg, "Issued start_tcp() command to start on port: %d\n", readCommandArgument(buffer));
         log(log_msg);
+         
         int data[2];
         readCommandArgument(buffer, data, 2);
         
