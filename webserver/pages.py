@@ -913,6 +913,14 @@ settings_tail = """
             {
                 auto_run_text.value = 'false';
             }
+            
+            var tcpServerSettings = document.getElementsByClassName('tcpserverport');
+            for(var i=0;i<tcpServerSettings.length;i++){
+                var tcp_server_port = document.getElementById(tcpServerSettings[i].id.replace('enabled', 'port'));
+                if(tcp_server_port)
+                    tcp_server_port.disabled = !(tcpServerSettings[i].checked);
+            }
+            
         }
 
         document.getElementById('modbus_server').onchange = function()
@@ -947,6 +955,17 @@ settings_tail = """
                 alert("Please select a port number between 0 and 65535");
                 return false;
             }
+            
+            var tcpServerSettings = document.getElementsByClassName('tcpserverport');
+            for(var i=0;i<tcpServerSettings.length;i++){
+                var tcp_server_port = document.getElementById(tcpServerSettings[i].id.replace('enabled', 'port'));
+                if(tcp_server_port && tcpServerSettings[i].checked == true && (Number(tcp_server_port.value) < 0 || Number(tcp_server_port.value) > 65535))
+                {
+                    alert("Please select a port number between 0 and 65535");
+                    return false;
+                }
+            }
+            
             return true;
         }
     </script>

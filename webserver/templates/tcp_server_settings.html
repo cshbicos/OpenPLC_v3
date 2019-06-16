@@ -1,0 +1,12 @@
+{% for tcp_server, tcp_server_value in tcp_server_settings|dictsort %}
+    <label class="container">
+        <b>TCP Server {{tcp_server}}</b>
+        <input id="tcp_{{tcp_server}}_enabled" onChange="setupCheckboxes()" type="checkbox" {% if tcp_server_value != 'disabled' %} checked {% endif %} class="tcpserverport">
+        <span class="checkmark"></span>
+    </label>
+    <label for='tcp_{{tcp_server}}_port'>
+        <b>TCP Server {{tcp_server}} Port</b>
+    </label>
+    <input type='text' id='tcp_{{tcp_server}}_port' name='tcp_{{tcp_server}}_port' value='{% if tcp_server_value != 'disabled' %}{{tcp_server_value}}{% else %}{{ 8500 + tcp_server|int }}{% endif %}'>
+    <br><br><br>
+{% endfor %}

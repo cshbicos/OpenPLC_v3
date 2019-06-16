@@ -10,9 +10,11 @@ import time
 import pages
 import openplc
 import sys
+import re
 
 import flask 
 import flask_login
+from flask import render_template
 
 app = flask.Flask(__name__)
 app.secret_key = str(os.urandom(16))
@@ -37,7 +39,9 @@ def configure_runtime():
             rows = cur.fetchall()
             cur.close()
             conn.close()
-
+            
+            
+            
             for row in rows:
                 if (row[0] == "Modbus_port"):
                     if (row[1] != "disabled"):
@@ -53,6 +57,18 @@ def configure_runtime():
                     else:
                         print("Disabling DNP3")
                         openplc_runtime.stop_dnp3()
+                elif (row[0].startswith("Tcp")):
+                    tcpServerMatch = re.match( r'Tcp_([0-9]+)_port', row[0], re.M|re.I)
+                    if tcpServerMatch:
+                        if (row[1] != "disabled"):
+                            print("Enabling TCP Server " + tcpServerMatch.group(1) + " on port " + str(int(row[1])))
+                            openplc_runtime.start_tcp(int(tcpServerMatch.group(1)), int(row[1]))
+                        else:
+                            print("Disabling TCP Server " + tcpServerMatch.group(1))
+                            openplc_runtime.stop_tcp(int(tcpServerMatch.group(1)))
+                    else:
+                        print("Unknown TCP Server setting")
+                    
         except Error as e:
             print("error connecting to the database" + str(e))
     else:
@@ -1665,7 +1681,7 @@ def settings():
                         action      = "settings"
                         method      = "post"
                         onsubmit    = "return validateForm()">
-                        
+                        <table><tr><td>
                         <label class="container">
                             <b>Enable Modbus Server</b>"""
             
@@ -1679,6 +1695,7 @@ def settings():
                     cur.close()
                     conn.close()
                     
+                    tcp_server_settings = {}
                     for row in rows:
                         if (row[0] == "Modbus_port"):
                             modbus_port = str(row[1])
@@ -1690,6 +1707,10 @@ def settings():
                             slave_polling = str(row[1])
                         elif (row[0] == "Slave_timeout"):
                             slave_timeout = str(row[1])
+                        elif (row[0].startswith("Tcp_")):
+                            tcpServerMatch = re.match( r'Tcp_([0-9]+)_port', row[0], re.M|re.I)
+                            if(tcpServerMatch):
+                                tcp_server_settings[tcpServerMatch.group(1)] = row[1]
                     
                     if (modbus_port == 'disabled'):
                         return_str += """
@@ -1764,6 +1785,12 @@ def settings():
                         <label for='slave_timeout'><b>Timeout (ms)</b></label>
                         <input type='text' id='slave_timeout' name='slave_timeout' value='""" + slave_timeout + "'>"
                     
+                    return_str += "</td><td style='vertical-align:top;padding-left:100px'>"
+                    
+                    return_str += render_template('tcp_server_settings.html', tcp_server_settings=tcp_server_settings);
+                
+                    return_str += "</td></tr></table>"
+                    
                     return_str += pages.settings_tail
                     
                 except Error as e:
@@ -1805,7 +1832,14 @@ def settings():
                     else:
                         cur.execute("UPDATE Settings SET Value = 'false' WHERE Key = 'Start_run_mode'")
                         conn.commit()
-                        
+                    
+                    cur.execute("UPDATE Settings SET Value = 'disabled' WHERE Key LIKE 'Tcp\_%\_port' ESCAPE '\\'")
+                    for key in flask.request.form:
+                        tcpServerMatch = re.match( r'tcp_([0-9]+)_port', key, re.M|re.I)
+                        if(tcpServerMatch):
+                            cur.execute("UPDATE Settings SET Value = '" + flask.request.form.get(key) + "' WHERE Key = 'Tcp_" + tcpServerMatch.group(1) + "_port'")
+                    conn.commit()
+                    
                     cur.execute("UPDATE Settings SET Value = ? WHERE Key = 'Slave_polling'", (str(slave_polling),))
                     conn.commit()
                     

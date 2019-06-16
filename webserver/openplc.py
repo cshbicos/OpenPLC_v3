@@ -145,7 +145,29 @@ class runtime:
                 s.close()
             except:
                 print("Error connecting to OpenPLC runtime")
+    
+    def start_tcp(self, server_num, port_num):
+        if (self.status() == "Running"):
+            try:
+                s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                s.connect(('localhost', 43628))
+                s.send('start_tcp(' + str(server_num) + ',' + str(port_num) + ')\n')
+                data = s.recv(1000)
+                s.close()
+            except:
+                print("Error connecting to OpenPLC runtime")
                 
+    def stop_tcp(self, server_num):
+        if (self.status() == "Running"):
+            try:
+                s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                s.connect(('localhost', 43628))
+                s.send('stop_tcp(' + str(server_num) + ')\n')
+                data = s.recv(1000)
+                s.close()
+            except:
+                print("Error connecting to OpenPLC runtime")
+    
     def stop_modbus(self):
         if (self.status() == "Running"):
             try:
